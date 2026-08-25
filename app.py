@@ -1,0 +1,491 @@
+"""Repo Control Center - Tabla de Repo Final automatizada.
+
+Flujo: Subir -> Validar -> Procesar -> Revisar -> Descargar.
+"""
+
+from __future__ import annotations
+
+import time
+import traceback
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+
+from repo_engine import config as C
+from repo_engine.auth import logout, require_login
+from repo_engine.catalogs import load_catalogs
+from repo_engine.excel_writer import write_workbook
+from repo_engine import sku_directory
+from repo_engine.readers import detect_source, read_any, read_source
+from repo_engine.transform import build
+from repo_engine.ui import (app_styles, hero, html, issue_box, kpi_row, sidebar_brand,
+                            slot_row, stepper)
+from repo_engine.validation import cross_validate, validate_source
+
+st.set_page_config(page_title="Repo Control Center",
+                   page_icon="📦", layout="wide",
+                   initial_sidebar_state="expanded")
+
+STEPS = ["Subir archivos", "Validar", "Procesar cruces", "Revisar errores", "Descargar Excel"]
+
+
+def fmt(n) -> str:
+    try:
+        return f"{float(n):,.0f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return str(n)
+
+
+# ---------------------------------------------------------------------------
+# estado
+# ---------------------------------------------------------------------------
+
+def _state():
+    st.session_state.setdefault("loaded", {})     # source -> LoadResult
+    st.session_state.setdefault("reports", {})    # source -> ValidationReport
+    st.session_state.setdefault("result", None)   # BuildResult
+    st.session_state.setdefault("excel", None)
+    st.session_state.setdefault("rep_mode", C.DEFAULT_REP_MODE)
+    st.session_state.setdefault("incluir_data", False)
+    st.session_state.setdefault("alerta_negativo", True)
+
+
+def reset_downstream():
+    st.session_state["result"] = None
+    st.session_state["excel"] = None
+
+
+# ---------------------------------------------------------------------------
+# paso 1 y 2: carga + validacion
+# ---------------------------------------------------------------------------
+
+def render_uploads():
+    html('<div class="card"><h3>1 · Carga los 5 archivos fuente</h3>'
+         '<p class="sub">Se validan al vuelo. Si subes un archivo en la casilla equivocada, '
+         'la app lo detecta por su estructura y te avisa.</p></div>')
+
+    slots = []
+    for start in range(0, len(C.SOURCE_ORDER), 2):
+        pair = C.SOURCE_ORDER[start:start + 2]
+        cols = st.columns(2)
+        slots.extend(zip(pair, cols))
+
+    for source, column in slots:
+        meta = C.SOURCE_META[source]
+        with column:
+            up = st.file_uploader(
+                f"{meta['icon']} · {meta['label']}",
+                type=meta["types"],
+                key=f"up_{source}",
+                help=f"{meta['desc']}  Ejemplo: {meta['hint']}",
+            )
+            if up is None:
+                st.session_state["loaded"].pop(source, None)
+                st.session_state["reports"].pop(source, None)
+                continue
+
+            sig = (up.name, up.size)
+            cached = st.session_state["loaded"].get(source)
+            if cached is None or getattr(cached, "_sig", None) != sig:
+                try:
+                    with st.spinner(f"Leyendo {up.name}…"):
+                        res = read_source(source, up, up.name)
+                    res._sig = sig
+                    res._filename = up.name
+                    st.session_state["loaded"][source] = res
+                    st.session_state["reports"][source] = validate_source(source, res.df)
+                    reset_downstream()
+                except Exception as exc:  # pragma: no cover - feedback al usuario
+                    st.session_state["loaded"].pop(source, None)
+                    st.error(f"No se pudo leer **{up.name}**: {exc}")
+                    guess = _guess(up)
+                    if guess and guess != source:
+                        st.info(f"Parece el archivo de **{C.SOURCE_META[guess]['label']}**.")
+                    continue
+
+            _render_slot_feedback(source)
+
+
+def _guess(up):
+    try:
+        return detect_source(read_any(up, up.name))
+    except Exception:
+        return None
+
+
+def _render_slot_feedback(source: str):
+    res = st.session_state["loaded"][source]
+    rep = st.session_state["reports"][source]
+    for check in rep.errors:
+        issue_box("error", check.title, check.detail)
+    for check in rep.warnings:
+        issue_box("warn", check.title, check.detail)
+    ok_checks = [c for c in rep.checks if c.level == "ok"]
+    resumen = " · ".join(c.detail for c in ok_checks[:3])
+    st.caption(f"**{fmt(res.rows)}** filas utiles de {fmt(res.rows_raw)} leidas.  {resumen}")
+    for note in res.notes:
+        st.caption(f"↳ {note}")
+
+
+def missing_sources() -> list[str]:
+    return [s for s in C.SOURCE_ORDER if s not in st.session_state["loaded"]]
+
+
+def blocking_errors() -> list[str]:
+    return [s for s, r in st.session_state["reports"].items() if not r.ok]
+
+
+# ---------------------------------------------------------------------------
+# paso 3: proceso
+# ---------------------------------------------------------------------------
+
+def render_process():
+    faltan, malos = missing_sources(), blocking_errors()
+    html('<div class="card"><h3>2 · Validacion cruzada y proceso</h3>'
+         '<p class="sub">Los cruces ya estan programados: no hay que configurar mapeos.</p></div>')
+
+    if faltan:
+        issue_box("info", "Faltan archivos",
+                  "Pendiente: " + ", ".join(C.SOURCE_META[s]["label"] for s in faltan))
+        return
+    if malos:
+        issue_box("error", "Hay archivos con errores de estructura",
+                  "Corrige: " + ", ".join(C.SOURCE_META[s]["label"] for s in malos))
+        return
+
+    dfs = {s: r.df for s, r in st.session_state["loaded"].items()}
+    for check in cross_validate(dfs):
+        issue_box(check.level if check.level != "ok" else "ok", check.title, check.detail)
+
+    if st.button("Procesar cruces y generar Tabla de Repo", type="primary", width="stretch"):
+        t0 = time.perf_counter()
+        try:
+            with st.spinner("Cruzando venta, stock, CD y pedidos…"):
+                result = build(dfs, rep_mode=st.session_state["rep_mode"])
+            with st.spinner("Escribiendo el libro final con formulas y hojas de apoyo…"):
+                meta = dict(result.stats)
+                meta["generado"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+                meta["archivos"] = {
+                    C.SOURCE_META[s]["label"]: getattr(r, "_filename", "")
+                    for s, r in st.session_state["loaded"].items()
+                }
+                st.session_state["excel"] = write_workbook(
+                    result.repo, result.catalogs,
+                    cd=result.cd, cuadre=result.cuadre, en_camino=result.en_camino,
+                    data=result.data, sku_dir=result.sku_dir, meta=meta,
+                    incluir_data=st.session_state["incluir_data"],
+                    alerta_negativo=st.session_state["alerta_negativo"],
+                )
+            if result.sku_dir:
+                sku_directory.save(result.sku_dir)
+            result.stats["segundos"] = time.perf_counter() - t0
+            st.session_state["result"] = result
+            st.rerun()
+        except Exception as exc:  # pragma: no cover - feedback al usuario
+            st.error(f"Fallo el proceso: {exc}")
+            with st.expander("Detalle tecnico"):
+                st.code(traceback.format_exc())
+
+
+# ---------------------------------------------------------------------------
+# pasos 4 y 5: revision + descarga
+# ---------------------------------------------------------------------------
+
+def render_result():
+    result = st.session_state["result"]
+    s = result.stats
+
+    kpi_row([
+        ("Cuadre", "OK" if s.get("cuadra") else "REVISAR",
+         "toda unidad esta en el REPO o explicada"),
+        ("Filas del REPO", fmt(s["filas"]), "SKU unicos (Modelo-Color-Talla)"),
+        ("SKU resueltos", f"{s.get('sku_cobertura', 0):.0%}",
+         f"{fmt(s.get('sku_desde_cd', 0))} del CD + {fmt(s.get('sku_desde_directorio', 0))} del directorio"),
+        ("Stock en tienda", fmt(s["unidades_stk"]), "columnas STK"),
+        ("En camino", fmt(s.get("en_camino_total", 0)), "pedidos que aun no llegan"),
+    ])
+
+    st.download_button(
+        "⬇  Descargar Tabla de Repo Final (.xlsx)",
+        data=st.session_state["excel"],
+        file_name=f"TABLA DE REPO {datetime.now():%d-%m-%Y}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+        type="primary",
+    )
+    st.caption(
+        f"Generado en {s.get('segundos', 0):.1f} s · libro vivo con formulas "
+        f"({len(C.FIXED_COLUMNS)} columnas fijas + {s['tiendas']}×3 de tienda) "
+        "y hojas CD, TIENDAS2, LLAVES, TIENDAS, EN CAMINO y CUADRE."
+    )
+
+    tab_cuadre, tab_err, tab_prev, tab_notes = st.tabs(
+        ["Cuadre", "Errores relevantes", "Vista previa", "Que se aplico"])
+
+    with tab_cuadre:
+        _render_cuadre(result)
+
+    with tab_err:
+        criticos = [i for i in result.issues if i.severity in ("error", "warn")]
+        if not criticos:
+            issue_box("ok", "Sin incidencias criticas", "Todos los cruces resolvieron correctamente.")
+        for issue in result.issues:
+            issue_box(issue.severity, f"{issue.title} · {fmt(issue.count)}", issue.detail)
+            if issue.sample is not None and len(issue.sample):
+                with st.expander(f"Ver detalle — {issue.title}"):
+                    st.dataframe(issue.sample, width="stretch", hide_index=True)
+
+    with tab_prev:
+        cat = result.catalogs
+        elegidas = st.multiselect(
+            "Tiendas a mostrar", options=[t.abrev for t in cat.tiendas],
+            default=[t.abrev for t in cat.tiendas[:6]],
+        )
+        marcas = st.multiselect("Marcas", options=sorted(result.repo["Marca"].dropna().unique()))
+        view = result.repo
+        if marcas:
+            view = view[view["Marca"].isin(marcas)]
+        cols = list(C.FIXED_COLUMNS) + [f"{a}|{m}" for a in elegidas for m in C.STORE_METRICS]
+        st.dataframe(view[cols].head(1000), width="stretch", hide_index=True)
+        st.caption(f"Mostrando {min(len(view), 1000):,} de {len(view):,} filas.")
+
+    with tab_notes:
+        st.markdown("**Formulas que quedan vivas en la hoja REPO**")
+        st.code(
+            'fila 1   =SUBTOTAL(9,T5:T{n})            total que respeta el autofiltro\n'
+            'fila 2   =VLOOKUP(T3,TIENDA,2,0)         codigo de tienda\n'
+            'K  SKU   =VLOOKUP(G5&"-"&H5&"-"&I5,CD!$A:$X,19,0)\n'
+            'L  TRASP =IFERROR(VLOOKUP($G5&"-"&$H5,TRSPINV26,2,0),"-")\n'
+            'M  REPOS =V5+Y5+AB5+...                  suma de las 69 columnas REP\n'
+            'N  NVODSP=S5+P5-M5                       DSP + RT - lo ya repuesto\n'
+            'O..S     =IFERROR(VLOOKUP(...,CD!$A:$X,18|20|21|22|23,0),0)',
+            language="text",
+        )
+        st.markdown("---")
+        for note in result.notes:
+            st.markdown(f"- {note}")
+        for source, res in st.session_state["loaded"].items():
+            for note in res.notes:
+                st.markdown(f"- **{C.SOURCE_META[source]['label']}**: {note}")
+
+
+def _render_sku_directory():
+    """Directorio LLAVE -> ID Producto: se llena solo y se puede ampliar."""
+    directorio = sku_directory.load()
+    st.sidebar.markdown("**Directorio de SKU**")
+    st.sidebar.caption(
+        f"{len(directorio):,} llaves con ID Producto. Crece solo con cada corrida; "
+        "el Stock CD del dia solo cubre lo que hoy esta en el CD."
+    )
+
+    with st.sidebar.expander("Ampliar de golpe con un maestro"):
+        st.caption(
+            "Sube cualquier export que traiga ID Producto + Cod. Modelo + Cod. Color "
+            "+ Talla. Con un maestro de productos el directorio queda completo de una vez."
+        )
+        up = st.file_uploader("Archivo", type=["xlsx", "xlsb", "xls", "csv", "txt"],
+                              key="up_sku_master", label_visibility="collapsed")
+        if up is not None and st.button("Importar al directorio", width="stretch"):
+            try:
+                df = read_any(up, up.name)
+                nuevo, sumados, error = sku_directory.import_file(df, directorio)
+                if error:
+                    st.error(error)
+                    st.caption("Columnas encontradas: " + ", ".join(map(str, df.columns[:20])))
+                else:
+                    sku_directory.save(nuevo)
+                    reset_downstream()
+                    st.success(f"{sumados:,} llaves nuevas. Total: {len(nuevo):,}.")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"No se pudo leer el archivo: {exc}")
+
+    if directorio:
+        st.sidebar.download_button(
+            "Descargar directorio (.json)",
+            data=sku_directory.export_json(directorio),
+            file_name="sku_directory.json",
+            mime="application/json",
+            width="stretch",
+            help="Guardalo en data/ del repo para que el avance no se pierda al redesplegar.",
+        )
+
+
+def _render_cuadre(result):
+    cuadre = result.cuadre
+    if cuadre is None:
+        st.info("Sin datos de cuadre.")
+        return
+
+    if cuadre.cuadra:
+        issue_box("ok", "El REPO cuadra",
+                  "Cada unidad de los archivos fuente esta en la tabla o explicada "
+                  "por una regla conocida. La columna 'Sin explicar' esta en cero.")
+    else:
+        issue_box("error", "Hay unidades sin explicar",
+                  "Revisa la fila marcada con NO: hay unidades del archivo que no "
+                  "llegaron al REPO ni fueron excluidas por una regla.")
+
+    st.markdown("**Identidad de control:** `archivo = REPO + excluido por regla + sin explicar`")
+    df = cuadre.to_frame()
+    st.dataframe(
+        df.style.format({
+            "Unidades en el archivo": "{:,.0f}",
+            "Unidades en el REPO": "{:,.0f}",
+            "Excluidas por regla": "{:,.0f}",
+            "Sin explicar": "{:,.0f}",
+        }),
+        width="stretch", hide_index=True,
+    )
+
+    des = cuadre.desglose_frame()
+    if not des.empty:
+        st.markdown("**Cobertura de los cruces**")
+        st.dataframe(des, width="stretch", hide_index=True)
+
+    por_tienda = getattr(cuadre, "por_tienda", None)
+    if por_tienda is not None and not por_tienda.empty:
+        st.markdown("**Cuadre tienda por tienda**")
+        desc = por_tienda[(por_tienda["Dif VNT"].abs() > 0.5) |
+                          (por_tienda["Dif STK"].abs() > 0.5)]
+        if len(desc):
+            issue_box("warn", f"{len(desc)} tiendas con diferencia",
+                      "El total de la columna no coincide con el archivo fuente.")
+            st.dataframe(desc, width="stretch", hide_index=True)
+        else:
+            issue_box("ok", "Las 69 tiendas cuadran",
+                      "VNT y STK de cada columna coinciden exactamente con el archivo.")
+        with st.expander("Ver el detalle de las 69 tiendas"):
+            st.dataframe(por_tienda, width="stretch", hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# sidebar
+# ---------------------------------------------------------------------------
+
+def render_sidebar():
+    cat = load_catalogs()
+    sidebar_brand(st.session_state.get("auth_user", ""))
+
+    st.sidebar.divider()
+    st.sidebar.markdown("**Columna REP (unidades en camino)**")
+    modes = list(C.REP_MODES)
+    choice = st.sidebar.radio(
+        "Como calcular REP",
+        options=modes,
+        format_func=lambda m: C.REP_MODES[m]["label"],
+        index=modes.index(st.session_state["rep_mode"]),
+        label_visibility="collapsed",
+    )
+    st.sidebar.caption(C.REP_MODES[choice]["help"])
+    if choice != st.session_state["rep_mode"]:
+        st.session_state["rep_mode"] = choice
+        reset_downstream()
+
+    st.sidebar.divider()
+    st.sidebar.markdown("**Libro de salida**")
+    st.sidebar.caption(
+        "Siempre incluye REPO (con formulas), CD, TIENDAS2, LLAVES, TIENDAS, "
+        "EN CAMINO y CUADRE."
+    )
+    alerta = st.sidebar.checkbox(
+        "Pintar NVO DSP CD en rojo si queda negativo",
+        value=st.session_state["alerta_negativo"],
+        help="Agregado nuestro: avisa cuando repones mas de lo disponible en el CD.",
+    )
+    if alerta != st.session_state["alerta_negativo"]:
+        st.session_state["alerta_negativo"] = alerta
+        reset_downstream()
+    incluir = st.sidebar.checkbox(
+        "Incluir la hoja DATA completa",
+        value=st.session_state["incluir_data"],
+        help="Tabla larga de auditoria (~140 mil filas). Suma varios minutos y MB.",
+    )
+    if incluir != st.session_state["incluir_data"]:
+        st.session_state["incluir_data"] = incluir
+        reset_downstream()
+
+    st.sidebar.divider()
+    _render_sku_directory()
+
+    st.sidebar.divider()
+    st.sidebar.markdown("**Catalogos de referencia**")
+    st.sidebar.caption(
+        f"{len(cat.tiendas)} tiendas · {len(cat.traspasos)} claves de traspaso de temporada"
+    )
+    with st.sidebar.expander("Ver tiendas del REPO"):
+        st.dataframe(
+            pd.DataFrame([{"Cod": t.cod, "Abrev": t.abrev, "Nombre": t.nombre} for t in cat.tiendas]),
+            width="stretch", hide_index=True, height=280,
+        )
+    with st.sidebar.expander("Actualizar traspasos de temporada"):
+        st.caption("Pega los COD MODELO-COD COLOR marcados con T (uno por linea).")
+        texto = st.text_area("Claves", value="\n".join(sorted(cat.traspasos)), height=160,
+                             label_visibility="collapsed")
+        if st.button("Guardar lista", width="stretch"):
+            from repo_engine.catalogs import save_traspasos
+            save_traspasos([l for l in texto.splitlines() if l.strip()])
+            reset_downstream()
+            st.success("Lista actualizada.")
+            st.rerun()
+
+    st.sidebar.divider()
+    if st.sidebar.button("Reiniciar proceso", width="stretch"):
+        for key in ("loaded", "reports", "result", "excel"):
+            st.session_state.pop(key, None)
+        st.rerun()
+    if st.sidebar.button("Cerrar sesion", width="stretch"):
+        logout()
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main():
+    _state()
+    if not require_login():
+        return
+
+    app_styles()
+    render_sidebar()
+
+    hero("Tabla de Repo Final",
+         "Sube los 5 reportes de siempre y descarga el REPO armado: mismos nombres, "
+         "mismo orden de columnas y los 69 bloques de tienda listos para trabajar.")
+
+    if st.session_state["result"] is not None:
+        current = 5
+    elif not missing_sources() and not blocking_errors():
+        current = 3
+    elif st.session_state["loaded"]:
+        current = 2
+    else:
+        current = 1
+    stepper(STEPS, current)
+
+    render_uploads()
+
+    html('<div class="card"><h3>Estado de la carga</h3>'
+         '<p class="sub">Cada archivo alimenta una parte distinta del REPO.</p></div>')
+    for source in C.SOURCE_ORDER:
+        meta = C.SOURCE_META[source]
+        res = st.session_state["loaded"].get(source)
+        rep = st.session_state["reports"].get(source)
+        if res is None:
+            slot_row(meta["icon"], meta["label"], meta["desc"], "wait")
+        elif rep is not None and not rep.ok:
+            slot_row(meta["icon"], meta["label"], "Estructura no valida", "err")
+        else:
+            slot_row(meta["icon"], meta["label"],
+                     f"{getattr(res, '_filename', '')} · {fmt(res.rows)} filas", "ok")
+
+    render_process()
+
+    if st.session_state["result"] is not None:
+        render_result()
+
+
+if __name__ == "__main__":
+    main()

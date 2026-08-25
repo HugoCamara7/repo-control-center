@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+outputs/
+*.xlsb
+*.xlsx
+!data/*.xlsx
+*.txt
+!requirements.txt
+!.streamlit/*.toml
+# data/ y assets/ SI se versionan: llevan los catalogos y los logos.
+!data/*.json
+!assets/**
+.DS_Store
+.idea/
+.vscode/
