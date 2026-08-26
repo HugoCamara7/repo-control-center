@@ -16,11 +16,13 @@ from repo_engine import config as C
 from repo_engine.auth import logout, require_login
 from repo_engine.catalogs import load_catalogs
 from repo_engine.excel_writer import write_workbook
-from repo_engine import pagina_efectividad, sku_directory
+from repo_engine import (pagina_efectividad, pagina_inicio, pagina_llenado,
+                         pagina_tallas, sku_directory)
 from repo_engine.readers import detect_source, read_any, read_source
 from repo_engine.transform import build
-from repo_engine.ui import (app_styles, hero, html, issue_box, kpi_row, sidebar_brand,
-                            slot_row, stepper)
+from repo_engine.ui import (app_styles, hero, html, issue_box, kpi_row, nav, section,
+                            sidebar_brand, sidebar_footer, sidebar_section, slot_row,
+                            stepper)
 from repo_engine.validation import cross_validate, validate_source
 
 st.set_page_config(page_title="Repo Control Center",
@@ -42,6 +44,9 @@ def fmt(n) -> str:
 # ---------------------------------------------------------------------------
 
 def _state():
+    st.session_state.setdefault("modulo", "inicio")
+    st.session_state.setdefault("tl_result", None)
+    st.session_state.setdefault("tl_sig", None)
     st.session_state.setdefault("loaded", {})     # source -> LoadResult
     st.session_state.setdefault("reports", {})    # source -> ValidationReport
     st.session_state.setdefault("result", None)   # BuildResult
@@ -364,121 +369,110 @@ def _render_cuadre(result):
 # sidebar
 # ---------------------------------------------------------------------------
 
-MODULOS = {
-    "repo": "📦  Tabla de Repo",
-    "efectividad": "📈  Efectividad de traspasos",
-}
-
-
 def render_sidebar():
-    cat = load_catalogs()
+    """Solo navegacion. Los ajustes de cada modulo viven dentro de su pantalla."""
     sidebar_brand(st.session_state.get("auth_user", ""))
-
-    modulo = st.sidebar.radio(
-        "Modulo", options=list(MODULOS), format_func=lambda m: MODULOS[m],
-        key="modulo", label_visibility="collapsed")
-    st.sidebar.divider()
-    if modulo != "repo":
-        st.sidebar.caption(
-            "Este modulo mide si los traspasos ya hechos se vendieron. "
-            "Los ajustes de la Tabla de Repo no aplican aqui."
-        )
-        if st.sidebar.button("Cerrar sesion", width="stretch", key="logout_ef"):
-            logout()
-        return modulo
-
-    st.sidebar.divider()
-    st.sidebar.markdown("**Columna REP (unidades en camino)**")
-    modes = list(C.REP_MODES)
-    choice = st.sidebar.radio(
-        "Como calcular REP",
-        options=modes,
-        format_func=lambda m: C.REP_MODES[m]["label"],
-        index=modes.index(st.session_state["rep_mode"]),
-        label_visibility="collapsed",
-    )
-    st.sidebar.caption(C.REP_MODES[choice]["help"])
-    if choice != st.session_state["rep_mode"]:
-        st.session_state["rep_mode"] = choice
-        reset_downstream()
-
-    st.sidebar.divider()
-    st.sidebar.markdown("**Libro de salida**")
-    st.sidebar.caption(
-        "Siempre incluye REPO (con formulas), CD, TIENDAS2, LLAVES, TIENDAS, "
-        "EN CAMINO y CUADRE."
-    )
-    alerta = st.sidebar.checkbox(
-        "Pintar NVO DSP CD en rojo si queda negativo",
-        value=st.session_state["alerta_negativo"],
-        help="Agregado nuestro: avisa cuando repones mas de lo disponible en el CD.",
-    )
-    if alerta != st.session_state["alerta_negativo"]:
-        st.session_state["alerta_negativo"] = alerta
-        reset_downstream()
-    incluir = st.sidebar.checkbox(
-        "Incluir la hoja DATA completa",
-        value=st.session_state["incluir_data"],
-        help="Tabla larga de auditoria (~140 mil filas). Suma varios minutos y MB.",
-    )
-    if incluir != st.session_state["incluir_data"]:
-        st.session_state["incluir_data"] = incluir
-        reset_downstream()
-
-    st.sidebar.divider()
-    _render_sku_directory()
-
-    st.sidebar.divider()
-    st.sidebar.markdown("**Catalogos de referencia**")
-    st.sidebar.caption(
-        f"{len(cat.tiendas)} tiendas · {len(cat.traspasos)} claves de traspaso de temporada"
-    )
-    with st.sidebar.expander("Ver tiendas del REPO"):
-        st.dataframe(
-            pd.DataFrame([{"Cod": t.cod, "Abrev": t.abrev, "Nombre": t.nombre} for t in cat.tiendas]),
-            width="stretch", hide_index=True, height=280,
-        )
-    with st.sidebar.expander("Actualizar traspasos de temporada"):
-        st.caption("Pega los COD MODELO-COD COLOR marcados con T (uno por linea).")
-        texto = st.text_area("Claves", value="\n".join(sorted(cat.traspasos)), height=160,
-                             label_visibility="collapsed")
-        if st.button("Guardar lista", width="stretch"):
-            from repo_engine.catalogs import save_traspasos
-            save_traspasos([l for l in texto.splitlines() if l.strip()])
-            reset_downstream()
-            st.success("Lista actualizada.")
-            st.rerun()
-
-    st.sidebar.divider()
-    if st.sidebar.button("Reiniciar proceso", width="stretch"):
-        for key in ("loaded", "reports", "result", "excel"):
-            st.session_state.pop(key, None)
-        st.rerun()
-    if st.sidebar.button("Cerrar sesion", width="stretch"):
+    sidebar_section("Modulos")
+    modulo = nav(st.session_state.get("modulo", "inicio"))
+    sidebar_footer(st.session_state.get("auth_user", ""))
+    if st.sidebar.button("Cerrar sesion", width="stretch", key="logout"):
         logout()
-    return "repo"
+    return modulo
+
+
+# ---------------------------------------------------------------------------
+# ajustes de la Tabla de Repo (dentro de su propia pantalla)
+# ---------------------------------------------------------------------------
+
+def render_ajustes_repo():
+    """Ajustes del modulo, dentro de su propia pantalla y no en el sidebar."""
+    cat = load_catalogs()
+
+    with st.expander("Ajustes del proceso y catalogos"):
+        c1, c2 = st.columns([1.2, 1])
+        with c1:
+            st.markdown("**Columna REP (unidades en camino)**")
+            modes = list(C.REP_MODES)
+            choice = st.radio(
+                "Como calcular REP", options=modes,
+                format_func=lambda m: C.REP_MODES[m]["label"],
+                index=modes.index(st.session_state["rep_mode"]),
+                label_visibility="collapsed", key="rep_mode_radio")
+            st.caption(C.REP_MODES[choice]["help"])
+            if choice != st.session_state["rep_mode"]:
+                st.session_state["rep_mode"] = choice
+                reset_downstream()
+        with c2:
+            st.markdown("**Libro de salida**")
+            st.caption("Siempre incluye REPO (con formulas), CD, SKUS, TIENDAS2, "
+                       "LLAVES, TIENDAS, EN CAMINO y CUADRE.")
+            alerta = st.checkbox(
+                "Pintar NVO DSP CD en rojo si queda negativo",
+                value=st.session_state["alerta_negativo"],
+                help="Avisa cuando repones mas de lo disponible en el CD.")
+            if alerta != st.session_state["alerta_negativo"]:
+                st.session_state["alerta_negativo"] = alerta
+                reset_downstream()
+            incluir = st.checkbox(
+                "Incluir la hoja DATA completa",
+                value=st.session_state["incluir_data"],
+                help="Tabla larga de auditoria (~140 mil filas). Suma varios minutos y MB.")
+            if incluir != st.session_state["incluir_data"]:
+                st.session_state["incluir_data"] = incluir
+                reset_downstream()
+
+        st.divider()
+        c3, c4 = st.columns(2)
+        with c3:
+            _render_sku_directory()
+        with c4:
+            st.markdown("**Catalogos de referencia**")
+            st.caption(f"{len(cat.tiendas)} tiendas · {len(cat.traspasos)} claves de "
+                       "traspaso de temporada")
+            with st.popover("Ver las 69 tiendas", width="stretch"):
+                st.dataframe(
+                    pd.DataFrame([{"Cod": t.cod, "Abrev": t.abrev, "Nombre": t.nombre}
+                                  for t in cat.tiendas]),
+                    width="stretch", hide_index=True, height=320)
+            with st.popover("Actualizar traspasos de temporada", width="stretch"):
+                st.caption("Pega los COD MODELO-COD COLOR marcados con T, uno por linea.")
+                texto = st.text_area("Claves", value="\n".join(sorted(cat.traspasos)),
+                                     height=200, label_visibility="collapsed")
+                if st.button("Guardar lista", width="stretch"):
+                    from repo_engine.catalogs import save_traspasos
+                    save_traspasos([l for l in texto.splitlines() if l.strip()])
+                    reset_downstream()
+                    st.success("Lista actualizada.")
+                    st.rerun()
+            if st.button("Reiniciar el proceso", width="stretch"):
+                for key in ("loaded", "reports", "result", "excel"):
+                    st.session_state.pop(key, None)
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
-def main():
-    _state()
-    if not require_login():
-        return
-
-    app_styles()
-    modulo = render_sidebar()
-
-    if modulo == "efectividad":
-        pagina_efectividad.render()
-        return
-
+def render_repo():
     hero("Tabla de Repo Final",
          "Sube los 5 reportes de siempre y descarga el REPO armado: mismos nombres, "
          "mismo orden de columnas y los 69 bloques de tienda listos para trabajar.")
 
+    t_gen, t_tallas, t_critico, t_canales = st.tabs(
+        ["Generar Tabla Repo", "Tallas unicas", "Stock critico", "Control SE / FB / DH"])
+
+    with t_gen:
+        _tab_generar()
+    with t_tallas:
+        pagina_tallas.render("tallas")
+    with t_critico:
+        pagina_tallas.render("critico")
+    with t_canales:
+        pagina_tallas.render("canales")
+
+
+def _tab_generar():
     if st.session_state["result"] is not None:
         current = 5
     elif not missing_sources() and not blocking_errors():
@@ -489,10 +483,10 @@ def main():
         current = 1
     stepper(STEPS, current)
 
+    render_ajustes_repo()
     render_uploads()
 
-    html('<div class="card"><h3>Estado de la carga</h3>'
-         '<p class="sub">Cada archivo alimenta una parte distinta del REPO.</p></div>')
+    section("Estado de la carga", "Cada archivo alimenta una parte distinta del REPO", "layers")
     for source in C.SOURCE_ORDER:
         meta = C.SOURCE_META[source]
         res = st.session_state["loaded"].get(source)
@@ -509,6 +503,32 @@ def main():
 
     if st.session_state["result"] is not None:
         render_result()
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+PAGINAS = {
+    "inicio": pagina_inicio.render,
+    "llenado": pagina_llenado.render,
+    "efectividad": pagina_efectividad.render,
+}
+
+
+def main():
+    _state()
+    if not require_login():
+        return
+
+    app_styles()
+    modulo = render_sidebar()
+
+    pagina = PAGINAS.get(modulo)
+    if pagina is not None:
+        pagina()
+        return
+    render_repo()
 
 
 if __name__ == "__main__":

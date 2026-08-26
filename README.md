@@ -1,6 +1,16 @@
-# Repo Control Center
+# Producto Control Center
 
-App en Streamlit con dos modulos para el area de Producto.
+App en Streamlit con cuatro modulos para el area de Producto. La navegacion es
+lateral, por tarjetas; los ajustes de cada modulo viven dentro de su pantalla.
+
+```
+Inicio · Tabla de Repo · Llenados de Canal · Analisis de Efectividad
+```
+
+### 🏠 Inicio
+
+Estado de la sesion (que archivos hay cargados, que ya se calculo) y accesos a
+los modulos.
 
 ### 📦 Tabla de Repo
 
@@ -14,6 +24,25 @@ Subir 5 archivos  →  Validar  →  Procesar cruces  →  Revisar errores  → 
 
 No hay que configurar mapeos: las reglas estan programadas y verificadas contra
 la plantilla original (ver [`docs/MAPEO_REPO.md`](docs/MAPEO_REPO.md)).
+
+Dentro de la pantalla, en tabs:
+
+| Tab | Que resuelve |
+|---|---|
+| **Generar Tabla Repo** | El flujo de 5 pasos y el libro de salida |
+| **Tallas unicas** | De que modelos queda una sola talla en cada tienda |
+| **Stock critico** | Modelos cuyo stock total en la tienda esta al limite |
+| **Control SE / FB / DH** | Lo mismo, vigilado aparte para los canales de liquidacion |
+
+El analisis de curva usa la foto de stock de `BODEGA GESTION` que ya se cargo
+para el REPO: no hay que subir nada extra. Cada tab filtra y descarga a Excel.
+
+### 🚚 Llenados de Canal
+
+Reparte una orden de compra entre tiendas: detecta las columnas marcadas con `X`,
+interpreta curvas tipo `1-2-2-2-1` y arma el llenado por SKU, talla y tienda.
+Nunca reparte mas de lo que trae la OC. Preview antes de descargar.
+Ver [`docs/LLENADO_DE_CANAL.md`](docs/LLENADO_DE_CANAL.md).
 
 ### 📈 Efectividad de traspasos
 
@@ -121,12 +150,18 @@ repo_engine/
   reconcile.py             cuadre unidad por unidad
   diagnostics.py           deteccion de incidencias
   excel_writer.py          exportador del libro vivo (formulas + formato)
+  tallas.py                analisis de curva rota, stock critico y SE/FB/DH
+  llenado.py               motor de reparto de OC por curva
   efectividad.py           motor de efectividad de traspasos
   efectividad_excel.py     reporte de 6 hojas
   charts.py                graficos del dashboard (Altair + SVG)
-  pagina_efectividad.py    pagina del modulo de efectividad
+  icons.py                 iconos SVG en linea (trazados de Lucide)
+  pagina_inicio.py         pantalla de inicio
+  pagina_tallas.py         tabs de curva dentro de la Tabla de Repo
+  pagina_llenado.py        pagina de Llenados de Canal
+  pagina_efectividad.py    pagina de Analisis de Efectividad
   auth.py                  login (mismo esquema que el Catalogo Control Center)
-  ui.py                    tema visual
+  ui.py                    sistema de diseno: navegacion, cards, tabs, chips
 data/catalogos.json        69 tiendas + traspasos, extraidos de la plantilla
 data/sku_directory.json    directorio acumulado de ID Producto
 assets/forus_logo.png      logo institucional
