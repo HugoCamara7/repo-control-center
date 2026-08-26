@@ -9,11 +9,11 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from . import charts
+from . import bq, charts, pagina_datos
 from .efectividad import CORTES_DIAS, MIN_DIAS_EVALUABLE, analizar, ranking, validar
 from .efectividad_excel import construir
 from .readers import read_any
-from .ui import hero, html, issue_box, kpi_row
+from .ui import hero, html, issue_box, kpi_row, section
 
 
 def _fmt(n, dec=0) -> str:
@@ -56,14 +56,25 @@ def render() -> None:
 # ---------------------------------------------------------------------------
 
 def _carga() -> None:
-    html('<div class="card"><h3>1 · Sube el archivo de traspasos y venta</h3>'
-         '<p class="sub">Un solo Excel con dos hojas: <b>guias</b> (traspasos) y '
-         '<b>venta</b> (venta diaria). Es el mismo <i>Venta diaria.xlsx</i> de siempre.</p></div>')
+    usar_bq = False
+    if bq.disponible():
+        section("Origen de la venta", "Los traspasos siguen viniendo del archivo", "layers")
+        st.radio(
+            "Origen", ["archivo", "bigquery"],
+            format_func=lambda o: ("Todo del Excel (hojas guias + venta)" if o == "archivo"
+                                   else "Traspasos del Excel · venta de BigQuery"),
+            horizontal=True, key="ef_origen", label_visibility="collapsed")
+        usar_bq = st.session_state.get("ef_origen") == "bigquery"
+
+    section("1 · Archivos",
+            "Un Excel con la hoja guias" if usar_bq
+            else "Un Excel con las hojas guias y venta", "upload")
 
     col_a, col_b = st.columns([2, 1])
     with col_a:
-        up = st.file_uploader("Venta diaria (hojas guias + venta)",
-                              type=["xlsx", "xlsb", "xls"], key="ef_up")
+        up = st.file_uploader(
+            "Traspasos (hoja guias)" if usar_bq else "Venta diaria (hojas guias + venta)",
+            type=["xlsx", "xlsb", "xls"], key="ef_up")
     with col_b:
         cat = st.file_uploader("Catalogo de producto (opcional)",
                                type=["xlsx", "xlsb", "xls", "txt", "csv"], key="ef_cat",
@@ -85,24 +96,51 @@ def _carga() -> None:
             st.session_state["ef_min_dias"] = int(min_dias)
             st.session_state["ef_result"] = None
 
+    conn = desde = hasta = max_gb = None
+    if usar_bq:
+        with st.container(border=True):
+            conn = pagina_datos.panel_conexion()
+            if conn is None:
+                return
+            desde, hasta, max_gb = pagina_datos.selector_periodo("efect")
+            st.caption("Se trae la venta **diaria** por tienda y producto: es la que "
+                       "necesita la ventana de atribucion del analisis.")
+
     if up is None:
         return
 
     sig = (up.name, up.size, st.session_state["ef_min_dias"],
-           getattr(cat, "name", None), getattr(cat, "size", None))
+           getattr(cat, "name", None), getattr(cat, "size", None),
+           usar_bq, desde, hasta)
     if st.session_state["ef_sig"] == sig and st.session_state["ef_result"] is not None:
+        return
+    if usar_bq and not st.button("Procesar con la venta de BigQuery", type="primary",
+                                 width="stretch", key="ef_procesar_bq"):
         return
 
     try:
         with st.spinner(f"Leyendo {up.name}…"):
             hojas = pd.read_excel(up, sheet_name=None)
         guias = _hoja(hojas, ("guias", "guia", "traspasos"))
-        venta = _hoja(hojas, ("venta", "ventas"))
-        if guias is None or venta is None:
-            issue_box("error", "Faltan hojas",
-                      "El archivo debe tener una hoja 'guias' y una hoja 'venta'. "
+        if guias is None:
+            issue_box("error", "Falta la hoja de traspasos",
+                      "El archivo debe tener una hoja 'guias'. "
                       f"Encontre: {', '.join(hojas)}.")
             return
+
+        if usar_bq:
+            df = pagina_datos.traer_ventas(conn, desde, hasta, max_gb, diaria=True)
+            if df is None:
+                return
+            venta = bq.a_formato_venta_diaria(df)
+        else:
+            venta = _hoja(hojas, ("venta", "ventas"))
+            if venta is None:
+                issue_box("error", "Falta la hoja de venta",
+                          "El archivo debe tener una hoja 'venta', o activa el "
+                          "origen BigQuery. "
+                          f"Encontre: {', '.join(hojas)}.")
+                return
         errores = validar(guias, venta)
         if errores:
             for e in errores:
