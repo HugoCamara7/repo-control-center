@@ -87,6 +87,24 @@ _PATHS = {
 NOMBRES = tuple(_PATHS)
 
 
+def icon_data_uri(nombre: str, color: str = "#5B6B86", stroke: float = 1.9) -> str:
+    """El icono como `data:` URI, para usarlo desde CSS (`background-image`).
+
+    Sirve para pintar el icono dentro de un `::before`, que es la unica forma de
+    meter grafica en un boton de Streamlit sin superponer elementos.
+    """
+    paths = _PATHS.get(nombre, _PATHS["info"])
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke}" '
+        f'stroke-linecap="round" stroke-linejoin="round">{paths}</svg>'
+    )
+    seguro = (svg.replace("#", "%23").replace('"', "'")
+              .replace("<", "%3C").replace(">", "%3E")
+              .replace("\n", "").replace("  ", " "))
+    return f"data:image/svg+xml,{seguro}"
+
+
 def icon(nombre: str, size: int = 18, stroke: float = 1.9, clase: str = "") -> str:
     """Devuelve el SVG en linea. Hereda el color del contenedor via currentColor."""
     paths = _PATHS.get(nombre)

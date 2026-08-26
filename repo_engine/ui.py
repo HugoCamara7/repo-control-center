@@ -197,43 +197,50 @@ def app_styles() -> None:
             font-size:10.5px; font-weight:900; letter-spacing:.13em; text-transform:uppercase;
             color:#93A3BC; margin:18px 6px 8px;
         }}
-        div[class*="st-key-navwrap_"] {{ position:relative; margin-bottom:6px; }}
-        div[class*="st-key-navwrap_"] .stButton {{
-            position:absolute; inset:0; margin:0; z-index:3;
+        /* El boton ES la tarjeta: no hay nada superpuesto, por lo que toda la
+           superficie es clickeable. El icono va en ::before y la descripcion
+           en ::after. */
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] {{
+            margin-bottom:6px;
         }}
-        div[class*="st-key-navwrap_"] .stButton button {{
-            width:100%; height:100%; opacity:0; border:none; background:transparent;
-            padding:0; min-height:0; cursor:pointer;
-        }}
-        .nav-item {{
-            display:flex; align-items:center; gap:11px; padding:11px 13px;
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button {{
+            position:relative; display:block; width:100%; text-align:left;
+            min-height:62px; padding:12px 14px 12px 58px;
             border-radius:13px; border:1px solid transparent; background:transparent;
+            box-shadow:none; cursor:pointer;
             transition:background .15s, border-color .15s, box-shadow .15s;
         }}
-        div[class*="st-key-navwrap_"]:hover .nav-item {{
-            background:#FFFFFF; border-color:var(--line);
-            box-shadow:0 4px 12px rgba(15,23,42,.06);
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button:hover {{
+            background:#FFFFFF !important; border-color:var(--line) !important;
+            box-shadow:0 4px 12px rgba(15,23,42,.06) !important;
         }}
-        .nav-ico {{
-            width:34px; height:34px; flex:0 0 auto; border-radius:10px; display:grid;
-            place-items:center; background:#E9EFFB; color:#5B6B86;
-            transition:background .15s, color .15s;
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button:focus:not(:active) {{
+            border-color:#C9DAFF !important; color:inherit !important;
         }}
-        .nav-txt {{ flex:1 1 auto; min-width:0; line-height:1.25; }}
-        .nav-txt b {{ display:block; font-size:13px; font-weight:850; color:#33415A; }}
-        .nav-txt > span {{
-            display:block; font-size:11px; color:#93A3BC; font-weight:650;
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button::before {{
+            content:""; position:absolute; left:12px; top:13px;
+            width:34px; height:34px; border-radius:10px;
+            background-repeat:no-repeat; background-position:center;
+            background-size:19px 19px;
+            transition:background-color .15s;
+        }}
+        /* Streamlit centra el contenido del boton con flex; aqui se alinea a la
+           izquierda para que el nombre arranque pegado al icono. */
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button > div,
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button > div > span {{
+            justify-content:flex-start !important;
+            align-items:flex-start !important;
+            width:100% !important;
+            text-align:left !important;
+        }}
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button p {{
+            margin:0; font-size:13px; line-height:1.25; text-align:left !important;
+        }}
+        section[data-testid="stSidebar"] div[class*="st-key-nav_"] button::after {{
+            display:block; margin-top:2px;
+            font-size:11px; font-weight:650; line-height:1.3;
             white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
         }}
-        .nav-dot {{ width:6px; height:6px; border-radius:50%; background:transparent; flex:0 0 auto; }}
-        .nav-item.active {{
-            background:linear-gradient(120deg, #EEF3FF, #FFFFFF);
-            border-color:#C9DAFF; box-shadow:0 6px 18px rgba(35,103,255,.13);
-        }}
-        .nav-item.active .nav-ico {{ background:{BRAND_BLUE}; color:#FFFFFF; }}
-        .nav-item.active .nav-txt b {{ color:#0B1B46; font-weight:900; }}
-        .nav-item.active .nav-txt > span {{ color:#5B7CC4; }}
-        .nav-item.active .nav-dot {{ background:{BRAND_BLUE}; }}
 
         .sb-foot {{
             display:flex; align-items:center; gap:7px; margin-top:18px; padding:9px 12px;
@@ -438,6 +445,9 @@ def app_styles() -> None:
         .chip-warn {{ background:#FFFBEB; border-color:#FDE68A; color:#92400E; }}
         .chip-err {{ background:#FEE2E2; border-color:#FECACA; color:#B91C1C; }}
         .chip-idle {{ background:#F1F5F9; border-color:#E2E8F0; color:#64748B; }}
+
+        /* ---------- estados de la navegacion ---------- */
+        {_css_nav()}
         </style>
         """,
         unsafe_allow_html=True,
@@ -456,25 +466,54 @@ MODULOS = {
 def nav(actual: str, state_key: str = "modulo") -> str:
     """Navegacion lateral con tarjetas.
 
-    Streamlit necesita un widget para capturar el clic, pero el boton queda
-    invisible y superpuesto sobre la tarjeta: lo que se ve y se estiliza es el
-    HTML, no el control nativo.
+    El boton **es** la tarjeta: se estiliza el control nativo en vez de taparlo
+    con un HTML encima. Superponer un boton invisible no funciona, porque
+    Streamlit no le da al wrapper el tamano de la tarjeta y el clic cae fuera.
+
+    El icono entra por `::before` como imagen de fondo y la descripcion por
+    `::after`, que es lo unico que se puede inyectar dentro de un boton.
     """
-    for clave, (etiqueta, desc, ico) in MODULOS.items():
-        activo = " active" if clave == actual else ""
-        with st.sidebar.container(key=f"navwrap_{clave}"):
-            html(f"""
-            <div class="nav-item{activo}">
-              <span class="nav-ico">{icon(ico, 19)}</span>
-              <span class="nav-txt"><b>{escape(etiqueta)}</b><span>{escape(desc)}</span></span>
-              <span class="nav-dot"></span>
-            </div>
-            """)
-            if st.button(etiqueta, key=f"nav_{clave}", help=desc):
-                if st.session_state.get(state_key) != clave:
-                    st.session_state[state_key] = clave
-                    st.rerun()
+    # El estado va en la CLAVE del widget, no en un <style> que se reescribe.
+    # Si se cambia el texto del bloque de estilos, el navegador actualiza el
+    # fondo del boton pero no vuelve a calcular su ::before, y el icono se
+    # queda con el color del modulo anterior. Con una clase distinta por estado
+    # el elemento es nuevo y el pseudo-elemento se recalcula solo.
+    for clave, (etiqueta, _desc, _ico) in MODULOS.items():
+        sufijo = "on" if clave == actual else "off"
+        if st.sidebar.button(etiqueta, key=f"nav_{clave}_{sufijo}", width="stretch"):
+            if st.session_state.get(state_key) != clave:
+                st.session_state[state_key] = clave
+                st.rerun()
     return st.session_state.get(state_key, actual)
+
+
+def _css_nav() -> str:
+    """Reglas por modulo y estado. Son fijas, se emiten una sola vez."""
+    from .icons import icon_data_uri
+
+    partes = []
+    for clave, (_etiqueta, desc, ico) in MODULOS.items():
+        for sufijo, activo in (("on", True), ("off", False)):
+            sel = f'section[data-testid="stSidebar"] div.st-key-nav_{clave}_{sufijo} button'
+            partes.append(f"""
+            {sel} {{
+                background:{'linear-gradient(120deg,#EEF3FF,#FFFFFF)' if activo else 'transparent'};
+                border-color:{'#C9DAFF' if activo else 'transparent'};
+                box-shadow:{'0 6px 18px rgba(35,103,255,.13)' if activo else 'none'};
+            }}
+            {sel}::before {{
+                background-color:{BRAND_BLUE if activo else '#E9EFFB'};
+                background-image:url("{icon_data_uri(ico, '#FFFFFF' if activo else '#5B6B86')}");
+            }}
+            {sel}::after {{
+                content:"{escape(desc)}";
+                color:{'#5B7CC4' if activo else '#93A3BC'};
+            }}
+            {sel} p {{
+                color:{'#0B1B46' if activo else '#33415A'};
+                font-weight:{900 if activo else 850};
+            }}""")
+    return "".join(partes)
 
 
 def sidebar_section(titulo: str) -> None:
