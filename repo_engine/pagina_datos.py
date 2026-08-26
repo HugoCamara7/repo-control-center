@@ -66,11 +66,16 @@ def panel_conexion() -> bq.Conexion | None:
         issue_box("warn", "Faltan columnas por mapear",
                   "No reconoci automaticamente: " + ", ".join(problemas) +
                   ". Completalo abajo una sola vez y queda guardado.")
-    _editor_mapeo(conn, tabla, mapa)
+        _editor_mapeo(conn, tabla, mapa)
+    else:
+        # El mapeo automatico basto: no se muestra el editor para no estorbar.
+        st.caption(f"{len(mapa)} columnas reconocidas automaticamente.")
+        with st.expander("Revisar el mapeo de columnas"):
+            _editor_mapeo(conn, tabla, mapa, expandido=False)
     return conn if not bq.faltantes(st.session_state["bq_mapa"]) else None
 
 
-def _editor_mapeo(conn, tabla: str, mapa: dict) -> None:
+def _editor_mapeo(conn, tabla: str, mapa: dict, expandido: bool = True) -> None:
     cols = st.session_state.get("bq_cols")
     if cols is None:
         try:
@@ -80,73 +85,76 @@ def _editor_mapeo(conn, tabla: str, mapa: dict) -> None:
             return
     opciones = ["—"] + sorted(str(c) for c in cols["column_name"])
 
-    with st.expander("Mapeo de columnas de la tabla de venta", expanded=bool(bq.faltantes(mapa))):
-        st.caption(
-            f"La tabla tiene **{len(cols)}** columnas. Esto se configura una vez: "
-            "el mapeo queda guardado en `data/bq_mapping.json` y se sube al repo."
-        )
-        nuevo = dict(mapa)
-        campos = list(bq.ALIAS_VENTAS)
-        columnas_ui = st.columns(3)
-        for i, campo in enumerate(campos):
-            actual = mapa.get(campo, "—")
-            idx = opciones.index(actual) if actual in opciones else 0
-            obligatorio = campo in bq.OBLIGATORIOS
-            etiqueta = f"{campo}{' *' if obligatorio else ''}"
-            sel = columnas_ui[i % 3].selectbox(etiqueta, opciones, index=idx,
-                                               key=f"bqmap_{campo}")
-            if sel != "—":
-                nuevo[campo] = sel
-            else:
-                nuevo.pop(campo, None)
+    st.caption(
+        f"La tabla tiene **{len(cols)}** columnas. Esto se configura una vez: "
+        "el mapeo queda guardado en `data/bq_mapping.json` y se sube al repo."
+    )
+    nuevo = dict(mapa)
+    columnas_ui = st.columns(3)
+    for i, campo in enumerate(bq.ALIAS_VENTAS):
+        actual = mapa.get(campo, "—")
+        idx = opciones.index(actual) if actual in opciones else 0
+        etiqueta = f"{campo}{' *' if campo in bq.OBLIGATORIOS else ''}"
+        sel = columnas_ui[i % 3].selectbox(etiqueta, opciones, index=idx,
+                                           key=f"bqmap_{campo}")
+        if sel != "—":
+            nuevo[campo] = sel
+        else:
+            nuevo.pop(campo, None)
 
-        c1, c2 = st.columns(2)
-        if c1.button("Guardar mapeo", width="stretch", type="primary"):
-            bq.guardar_mapeo(nuevo, tabla)
-            st.session_state["bq_mapa"] = nuevo
-            st.success("Mapeo guardado.")
-            st.rerun()
-        if c2.button("Ver columnas de la tabla", width="stretch"):
-            st.dataframe(cols, width="stretch", hide_index=True, height=320)
+    if st.button("Guardar mapeo", width="stretch", type="primary", key="bq_guardar_mapeo"):
+        bq.guardar_mapeo(nuevo, tabla)
+        st.session_state["bq_mapa"] = nuevo
+        st.success("Mapeo guardado.")
+        st.rerun()
+    with st.popover("Ver las columnas de la tabla", width="stretch"):
+        st.dataframe(cols, width="stretch", hide_index=True, height=320)
 
 
 # ---------------------------------------------------------------------------
 
+ATAJOS = {
+    "7 dias": 7,
+    "30 dias": 30,
+    "90 dias": 90,
+    "Este ano": None,
+}
+
+
 def selector_periodo(clave: str, etiqueta: str = "Periodo de venta"):
-    """Rango de fechas + tope de lectura. Devuelve (desde, hasta, max_gb)."""
+    """Rango de fechas. Devuelve (desde, hasta, max_gb)."""
     _estado()
-    section(etiqueta, "La consulta filtra por fecha y agrega en el servidor", "clock")
-    c1, c2, c3 = st.columns([2, 1, 1])
-    rango = c1.date_input(
+    section(etiqueta, "Elige el rango y la app trae la venta ya sumada", "clock")
+
+    # Los atajos ESCRIBEN sobre el calendario en vez de reemplazarlo por detras:
+    # antes el rango mostraba una cosa y la consulta usaba otra.
+    hoy = date.today()
+    cols = st.columns(len(ATAJOS) + 1)
+    for i, (nombre, dias) in enumerate(ATAJOS.items()):
+        if cols[i].button(nombre, key=f"bq_at_{clave}_{i}", width="stretch"):
+            st.session_state["bq_desde"] = (hoy.replace(month=1, day=1) if dias is None
+                                            else hoy - timedelta(days=dias - 1))
+            st.session_state["bq_hasta"] = hoy
+            st.rerun()
+
+    rango = st.date_input(
         "Desde / hasta",
         value=(st.session_state["bq_desde"], st.session_state["bq_hasta"]),
-        key=f"bq_rango_{clave}",
-        help="Solo se leen las particiones de este rango; fuera de el no se cobra.")
-    atajo = c2.selectbox("Atajo", ["Personalizado", "Ultimos 7 dias", "Ultimos 30 dias",
-                                   "Mes actual", "Ano actual"], key=f"bq_atajo_{clave}")
-    max_gb = c3.number_input("Tope de lectura (GB)", 1.0, 500.0,
-                             float(st.session_state["bq_max_gb"]), step=5.0,
-                             key=f"bq_gb_{clave}")
-    st.session_state["bq_max_gb"] = max_gb
+        key=f"bq_rango_{clave}", format="DD/MM/YYYY")
+    if isinstance(rango, (tuple, list)) and len(rango) == 2:
+        st.session_state["bq_desde"], st.session_state["bq_hasta"] = rango
+    desde, hasta = st.session_state["bq_desde"], st.session_state["bq_hasta"]
 
-    hoy = date.today()
-    if atajo == "Ultimos 7 dias":
-        desde, hasta = hoy - timedelta(days=7), hoy
-    elif atajo == "Ultimos 30 dias":
-        desde, hasta = hoy - timedelta(days=30), hoy
-    elif atajo == "Mes actual":
-        desde, hasta = hoy.replace(day=1), hoy
-    elif atajo == "Ano actual":
-        desde, hasta = hoy.replace(month=1, day=1), hoy
-    elif isinstance(rango, (tuple, list)) and len(rango) == 2:
-        desde, hasta = rango
-    else:
-        desde, hasta = st.session_state["bq_desde"], st.session_state["bq_hasta"]
-
-    st.session_state["bq_desde"], st.session_state["bq_hasta"] = desde, hasta
     dias = (hasta - desde).days + 1
     st.caption(f"**{desde:%d/%m/%Y}** al **{hasta:%d/%m/%Y}** · {dias} dias.")
-    return desde, hasta, max_gb
+
+    with st.expander("Opciones avanzadas"):
+        st.session_state["bq_max_gb"] = st.number_input(
+            "Tope de lectura (GB)", 1.0, 500.0, float(st.session_state["bq_max_gb"]),
+            step=5.0, key=f"bq_gb_{clave}",
+            help="Freno de seguridad: si la consulta fuera a leer mas que esto, "
+                 "se detiene y avisa en vez de ejecutarse.")
+    return desde, hasta, st.session_state["bq_max_gb"]
 
 
 def traer_ventas(conn, desde: date, hasta: date, max_gb: float,

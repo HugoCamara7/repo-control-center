@@ -260,22 +260,27 @@ def _select(mapa: dict, campos: list[str]) -> list[str]:
     return [f"`{mapa[c]}` AS {c}" for c in campos if c in mapa]
 
 
+#: Sin `HAVING`: si la columna de origen se llama igual que el alias de salida
+#: (`unidades`), BigQuery resuelve el nombre al alias —que ya es un SUM— y falla
+#: con "Aggregations of aggregations are not allowed". Las filas que suman cero
+#: se descartan despues, en pandas, que es equivalente y no puede romperse.
+
 def sql_ventas_agregadas(mapa: dict, tabla: str) -> str:
     """Venta del periodo agregada por producto y tienda: alimenta la Tabla de Repo."""
     dims = [c for c in ("tienda_cod", "tienda_nombre", "clase", "marca", "genero",
                         "linea", "temporada", "estilo", "tipo_prenda",
                         "temporada_comercial", "cod_modelo", "modelo", "cod_color",
                         "color", "talla", "id_producto", "barra") if c in mapa]
-    select = ",\n           ".join(_select(mapa, dims))
+    select = ",\n               ".join(_select(mapa, dims))
     group = ", ".join(str(i + 1) for i in range(len(dims)))
+    venta = (f",\n               SUM(`{mapa['venta']}`) AS venta"
+             if "venta" in mapa else "")
     return f"""
         SELECT {select},
-               SUM(`{mapa['unidades']}`) AS unidades
-               {", SUM(`" + mapa['venta'] + "`) AS venta" if 'venta' in mapa else ""}
+               SUM(`{mapa['unidades']}`) AS unidades{venta}
         FROM `{tabla}`
         WHERE DATE(`{mapa['fecha']}`) BETWEEN @desde AND @hasta
         GROUP BY {group}
-        HAVING SUM(`{mapa['unidades']}`) <> 0
     """
 
 
@@ -283,7 +288,7 @@ def sql_ventas_diarias(mapa: dict, tabla: str) -> str:
     """Venta diaria por tienda y producto: alimenta el Analisis de Efectividad."""
     dims = [c for c in ("tienda_cod", "tienda_nombre", "id_producto", "cod_modelo",
                         "modelo", "cod_color", "color", "talla") if c in mapa]
-    select = ",\n           ".join(_select(mapa, dims))
+    select = ",\n               ".join(_select(mapa, dims))
     group = ", ".join(str(i + 2) for i in range(len(dims)))
     return f"""
         SELECT DATE(`{mapa['fecha']}`) AS fecha,
@@ -292,7 +297,6 @@ def sql_ventas_diarias(mapa: dict, tabla: str) -> str:
         FROM `{tabla}`
         WHERE DATE(`{mapa['fecha']}`) BETWEEN @desde AND @hasta
         GROUP BY 1, {group}
-        HAVING SUM(`{mapa['unidades']}`) <> 0
     """
 
 
@@ -300,7 +304,10 @@ def ventas(conn: Conexion, mapa: dict, tabla: str, desde: date, hasta: date,
            diaria: bool = False, max_gb: float = MAX_GB_POR_DEFECTO):
     sql = sql_ventas_diarias(mapa, tabla) if diaria else sql_ventas_agregadas(mapa, tabla)
     params = [_param("desde", "DATE", desde), _param("hasta", "DATE", hasta)]
-    return ejecutar(conn, sql, params, max_gb)
+    df, gb = ejecutar(conn, sql, params, max_gb)
+    if "unidades" in df.columns:          # el filtro que antes hacia el HAVING
+        df = df[pd.to_numeric(df["unidades"], errors="coerce").fillna(0) != 0]
+    return df.reset_index(drop=True), gb
 
 
 #: Alias del maestro de productos. Segun la capa, el tablon trae unos u otros.
