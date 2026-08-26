@@ -1,8 +1,12 @@
 # Repo Control Center
 
-App en Streamlit que arma la **Tabla de Repo Final** a partir de los 5 reportes
-de siempre, con la misma estructura, nombres y orden de columnas que la
-plantilla `.xlsb` que hoy se construye a mano.
+App en Streamlit con dos modulos para el area de Producto.
+
+### 📦 Tabla de Repo
+
+Arma la **Tabla de Repo Final** a partir de los 5 reportes de siempre, con la
+misma estructura, nombres, formulas y formato que la plantilla `.xlsb` que hoy
+se construye a mano.
 
 ```
 Subir 5 archivos  →  Validar  →  Procesar cruces  →  Revisar errores  →  Descargar Excel
@@ -10,6 +14,16 @@ Subir 5 archivos  →  Validar  →  Procesar cruces  →  Revisar errores  → 
 
 No hay que configurar mapeos: las reglas estan programadas y verificadas contra
 la plantilla original (ver [`docs/MAPEO_REPO.md`](docs/MAPEO_REPO.md)).
+
+### 📈 Efectividad de traspasos
+
+Dashboard ejecutivo que mide si lo enviado a cada tienda efectivamente se
+vendio ahi, con la venta atribuible **topeada al traspaso**. Incluye medidor de
+efectividad, rankings de tiendas y modelos, evolucion, semaforo, cortes a
+7/14/30 dias y un reporte Excel de 6 hojas listo para presentar.
+
+Reproduce el analisis manual con 0 diferencias en 30.262 filas.
+Ver [`docs/EFECTIVIDAD.md`](docs/EFECTIVIDAD.md).
 
 ---
 
@@ -107,6 +121,10 @@ repo_engine/
   reconcile.py             cuadre unidad por unidad
   diagnostics.py           deteccion de incidencias
   excel_writer.py          exportador del libro vivo (formulas + formato)
+  efectividad.py           motor de efectividad de traspasos
+  efectividad_excel.py     reporte de 6 hojas
+  charts.py                graficos del dashboard (Altair + SVG)
+  pagina_efectividad.py    pagina del modulo de efectividad
   auth.py                  login (mismo esquema que el Catalogo Control Center)
   ui.py                    tema visual
 data/catalogos.json        69 tiendas + traspasos, extraidos de la plantilla

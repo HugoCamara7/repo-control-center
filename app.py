@@ -16,7 +16,7 @@ from repo_engine import config as C
 from repo_engine.auth import logout, require_login
 from repo_engine.catalogs import load_catalogs
 from repo_engine.excel_writer import write_workbook
-from repo_engine import sku_directory
+from repo_engine import pagina_efectividad, sku_directory
 from repo_engine.readers import detect_source, read_any, read_source
 from repo_engine.transform import build
 from repo_engine.ui import (app_styles, hero, html, issue_box, kpi_row, sidebar_brand,
@@ -364,9 +364,28 @@ def _render_cuadre(result):
 # sidebar
 # ---------------------------------------------------------------------------
 
+MODULOS = {
+    "repo": "📦  Tabla de Repo",
+    "efectividad": "📈  Efectividad de traspasos",
+}
+
+
 def render_sidebar():
     cat = load_catalogs()
     sidebar_brand(st.session_state.get("auth_user", ""))
+
+    modulo = st.sidebar.radio(
+        "Modulo", options=list(MODULOS), format_func=lambda m: MODULOS[m],
+        key="modulo", label_visibility="collapsed")
+    st.sidebar.divider()
+    if modulo != "repo":
+        st.sidebar.caption(
+            "Este modulo mide si los traspasos ya hechos se vendieron. "
+            "Los ajustes de la Tabla de Repo no aplican aqui."
+        )
+        if st.sidebar.button("Cerrar sesion", width="stretch", key="logout_ef"):
+            logout()
+        return modulo
 
     st.sidebar.divider()
     st.sidebar.markdown("**Columna REP (unidades en camino)**")
@@ -437,6 +456,7 @@ def render_sidebar():
         st.rerun()
     if st.sidebar.button("Cerrar sesion", width="stretch"):
         logout()
+    return "repo"
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +469,11 @@ def main():
         return
 
     app_styles()
-    render_sidebar()
+    modulo = render_sidebar()
+
+    if modulo == "efectividad":
+        pagina_efectividad.render()
+        return
 
     hero("Tabla de Repo Final",
          "Sube los 5 reportes de siempre y descarga el REPO armado: mismos nombres, "
