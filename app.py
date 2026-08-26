@@ -16,8 +16,8 @@ from repo_engine import config as C
 from repo_engine.auth import logout, require_login
 from repo_engine.catalogs import load_catalogs
 from repo_engine.excel_writer import write_workbook
-from repo_engine import (pagina_efectividad, pagina_inicio, pagina_llenado,
-                         pagina_tallas, sku_directory)
+from repo_engine import (bq, pagina_datos, pagina_efectividad, pagina_inicio,
+                         pagina_llenado, pagina_tallas, sku_directory)
 from repo_engine.readers import detect_source, read_any, read_source
 from repo_engine.transform import build
 from repo_engine.ui import (app_styles, hero, html, issue_box, kpi_row, nav, section,
@@ -65,14 +65,50 @@ def reset_downstream():
 # paso 1 y 2: carga + validacion
 # ---------------------------------------------------------------------------
 
-def render_uploads():
-    html('<div class="card"><h3>1 · Carga los 5 archivos fuente</h3>'
-         '<p class="sub">Se validan al vuelo. Si subes un archivo en la casilla equivocada, '
-         'la app lo detecta por su estructura y te avisa.</p></div>')
+def render_venta_bigquery():
+    """La venta se puede traer del datalake en vez de subir el TXT."""
+    conn = pagina_datos.panel_conexion()
+    if conn is None:
+        return False
+    desde, hasta, max_gb = pagina_datos.selector_periodo("repo")
+    if st.button("Traer venta de BigQuery", type="primary", width="stretch",
+                 key="bq_traer_repo"):
+        df = pagina_datos.traer_ventas(conn, desde, hasta, max_gb, diaria=False)
+        if df is not None:
+            from repo_engine.readers import LoadResult
+            vta = bq.a_formato_vta(df)
+            res = LoadResult(source=C.SRC_VTA, df=vta, rows_raw=len(vta),
+                             notes=[f"Venta traida de BigQuery del {desde:%d/%m/%Y} "
+                                    f"al {hasta:%d/%m/%Y}."])
+            res._sig = ("bigquery", desde, hasta)
+            res._filename = f"BigQuery {desde:%d-%m-%Y} a {hasta:%d-%m-%Y}"
+            st.session_state["loaded"][C.SRC_VTA] = res
+            st.session_state["reports"][C.SRC_VTA] = validate_source(C.SRC_VTA, vta)
+            reset_downstream()
+            st.rerun()
+    return True
 
+
+def render_uploads():
+    section("Carga los archivos fuente", "Se validan al vuelo; si subes uno en la "
+            "casilla equivocada la app lo detecta por su estructura", "upload")
+
+    origen = st.session_state.get("origen_venta", "archivo")
+    if bq.disponible():
+        origen = st.radio(
+            "Origen de la venta", ["archivo", "bigquery"],
+            format_func=lambda o: ("Subir el TXT de venta" if o == "archivo"
+                                   else "Traer de BigQuery por rango de fechas"),
+            horizontal=True, key="origen_venta", label_visibility="collapsed")
+    if origen == "bigquery":
+        with st.container(border=True):
+            render_venta_bigquery()
+
+    fuentes = [s for s in C.SOURCE_ORDER
+               if not (s == C.SRC_VTA and origen == "bigquery")]
     slots = []
-    for start in range(0, len(C.SOURCE_ORDER), 2):
-        pair = C.SOURCE_ORDER[start:start + 2]
+    for start in range(0, len(fuentes), 2):
+        pair = fuentes[start:start + 2]
         cols = st.columns(2)
         slots.extend(zip(pair, cols))
 
@@ -275,6 +311,31 @@ def render_result():
                 st.markdown(f"- **{C.SOURCE_META[source]['label']}**: {note}")
 
 
+def _barras_conocidas() -> pd.Series:
+    """LLAVE -> codigo de barras, sacado de lo que ya esta cargado.
+
+    Sirve de puente cuando el maestro no trae talla: ARTI da barra -> ID y la
+    bodega da LLAVE -> barra.
+    """
+    from repo_engine.readers import build_llave
+    partes = []
+    for src in (C.SRC_BODEGA, C.SRC_VTA):
+        res = st.session_state.get("loaded", {}).get(src)
+        if res is None or "Codigo Barra" not in res.df.columns:
+            continue
+        d = res.df
+        barra = pd.to_numeric(d["Codigo Barra"], errors="coerce")
+        partes.append(pd.DataFrame({
+            "llave": build_llave(d["Cod. Modelo"], d["Cod. Color"], d["Talla/Numero"]),
+            "barra": barra.map(lambda v: "" if pd.isna(v) else str(int(v))),
+        }))
+    if not partes:
+        return pd.Series(dtype="object")
+    todo = pd.concat(partes, ignore_index=True)
+    todo = todo[(todo["barra"] != "") & (todo["llave"] != "--")]
+    return todo.drop_duplicates("llave").set_index("llave")["barra"]
+
+
 def _render_sku_directory():
     """Directorio LLAVE -> ID Producto: se llena solo y se puede ampliar."""
     directorio = sku_directory.load()
@@ -306,8 +367,30 @@ def _render_sku_directory():
             except Exception as exc:
                 st.error(f"No se pudo leer el archivo: {exc}")
 
+    if bq.disponible():
+        st.caption("**Desde ARTI**: trae el maestro completo del datalake y llena "
+                   "el directorio de una vez.")
+        if st.button("Traer SKUs de ARTI", width="stretch", key="bq_arti"):
+            conn = bq.cliente()
+            if not conn.ok:
+                st.error(conn.detalle)
+            else:
+                try:
+                    with st.spinner("Consultando el maestro de productos…"):
+                        df, gb, mapa = bq.arti(conn, bq.tabla_arti())
+                    llaves, via = bq.llaves_desde_arti(df, mapa, _barras_conocidas())
+                    nuevo = dict(directorio)
+                    sumados = sku_directory.merge(nuevo, llaves["llave"], llaves["id"])
+                    sku_directory.save(nuevo)
+                    reset_downstream()
+                    st.success(f"{sumados:,} llaves nuevas desde ARTI via {via} "
+                               f"({gb:.2f} GB leidos). Total: {len(nuevo):,}.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"No se pudo traer ARTI: {type(exc).__name__}: {exc}")
+
     if directorio:
-        st.sidebar.download_button(
+        st.download_button(
             "Descargar directorio (.json)",
             data=sku_directory.export_json(directorio),
             file_name="sku_directory.json",

@@ -12,6 +12,16 @@ Inicio · Tabla de Repo · Llenados de Canal · Analisis de Efectividad
 Estado de la sesion (que archivos hay cargados, que ya se calculo) y accesos a
 los modulos.
 
+### 🔌 BigQuery (opcional)
+
+Si estan los secrets, la **venta** deja de subirse a mano: se elige un rango de
+fechas y la app la trae de `silver.ft_pe_reporteria_ventas_tablon`, agregada en
+el servidor y con dry run previo para controlar el costo. El **maestro ARTI**
+llena el directorio de SKU de una vez.
+
+El stock (CD y Bodega Gestion) se sigue subiendo porque la tabla necesita la foto
+del momento, no un historico. Ver [`docs/BIGQUERY.md`](docs/BIGQUERY.md).
+
 ### 📦 Tabla de Repo
 
 Arma la **Tabla de Repo Final** a partir de los 5 reportes de siempre, con la
@@ -150,6 +160,8 @@ repo_engine/
   reconcile.py             cuadre unidad por unidad
   diagnostics.py           deteccion de incidencias
   excel_writer.py          exportador del libro vivo (formulas + formato)
+  bq.py                    lectura desde BigQuery (venta por rango, ARTI)
+  pagina_datos.py          conexion, mapeo de columnas y selector de periodo
   tallas.py                analisis de curva rota, stock critico y SE/FB/DH
   llenado.py               motor de reparto de OC por curva
   efectividad.py           motor de efectividad de traspasos
