@@ -8,6 +8,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from .icons import icon
+
 BRAND_PRIMARY = "#17269A"
 BRAND_BLUE = "#2367FF"
 BRAND_ACCENT = "#009FE3"
@@ -38,7 +40,9 @@ def login_styles() -> None:
     st.markdown(
         f"""
         <style>
-        [data-testid="stSidebar"] {{ display:none; }}
+        /* En el login no hay contenido de sidebar, asi que Streamlit no lo monta.
+           No se usa display:none porque eso lo deja marcado como colapsado y
+           despues no vuelve a aparecer. */
         [data-testid="stToolbar"], .stDeployButton, header[data-testid="stHeader"] {{ display:none !important; }}
         [data-testid="stAppViewContainer"] {{
             background:
@@ -164,8 +168,10 @@ def app_styles() -> None:
 
         section[data-testid="stSidebar"] {{
             background:#F3F6FB; border-right:1px solid #DDE6F2;
+            min-width:288px; width:288px;
         }}
         section[data-testid="stSidebar"] > div {{ padding:22px 16px; }}
+        section[data-testid="stSidebar"] hr {{ margin:14px 0; border-color:#DFE7F3; }}
         section[data-testid="stSidebar"] p,
         section[data-testid="stSidebar"] label,
         section[data-testid="stSidebar"] span {{ color:#172554; }}
@@ -185,6 +191,56 @@ def app_styles() -> None:
         .sb-txt b {{ display:block; font-size:13.5px; font-weight:900; color:#0B1B46; }}
         .sb-txt span {{ display:block; font-size:11.5px; color:var(--text-muted); font-weight:650;
                         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+
+        /* ---------- navegacion lateral ---------- */
+        section[data-testid="stSidebar"] .sb-sec {{
+            font-size:10.5px; font-weight:900; letter-spacing:.13em; text-transform:uppercase;
+            color:#93A3BC; margin:18px 6px 8px;
+        }}
+        div[class*="st-key-navwrap_"] {{ position:relative; margin-bottom:6px; }}
+        div[class*="st-key-navwrap_"] .stButton {{
+            position:absolute; inset:0; margin:0; z-index:3;
+        }}
+        div[class*="st-key-navwrap_"] .stButton button {{
+            width:100%; height:100%; opacity:0; border:none; background:transparent;
+            padding:0; min-height:0; cursor:pointer;
+        }}
+        .nav-item {{
+            display:flex; align-items:center; gap:11px; padding:11px 13px;
+            border-radius:13px; border:1px solid transparent; background:transparent;
+            transition:background .15s, border-color .15s, box-shadow .15s;
+        }}
+        div[class*="st-key-navwrap_"]:hover .nav-item {{
+            background:#FFFFFF; border-color:var(--line);
+            box-shadow:0 4px 12px rgba(15,23,42,.06);
+        }}
+        .nav-ico {{
+            width:34px; height:34px; flex:0 0 auto; border-radius:10px; display:grid;
+            place-items:center; background:#E9EFFB; color:#5B6B86;
+            transition:background .15s, color .15s;
+        }}
+        .nav-txt {{ flex:1 1 auto; min-width:0; line-height:1.25; }}
+        .nav-txt b {{ display:block; font-size:13px; font-weight:850; color:#33415A; }}
+        .nav-txt > span {{
+            display:block; font-size:11px; color:#93A3BC; font-weight:650;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }}
+        .nav-dot {{ width:6px; height:6px; border-radius:50%; background:transparent; flex:0 0 auto; }}
+        .nav-item.active {{
+            background:linear-gradient(120deg, #EEF3FF, #FFFFFF);
+            border-color:#C9DAFF; box-shadow:0 6px 18px rgba(35,103,255,.13);
+        }}
+        .nav-item.active .nav-ico {{ background:{BRAND_BLUE}; color:#FFFFFF; }}
+        .nav-item.active .nav-txt b {{ color:#0B1B46; font-weight:900; }}
+        .nav-item.active .nav-txt > span {{ color:#5B7CC4; }}
+        .nav-item.active .nav-dot {{ background:{BRAND_BLUE}; }}
+
+        .sb-foot {{
+            display:flex; align-items:center; gap:7px; margin-top:18px; padding:9px 12px;
+            border-radius:11px; background:#EDF1F8; color:#5B6B86;
+            font-size:11.5px; font-weight:750;
+        }}
+        .sb-foot svg {{ flex:0 0 auto; }}
 
         /* ---------- hero ---------- */
         .hero {{
@@ -311,12 +367,123 @@ def app_styles() -> None:
             background:linear-gradient(135deg,#0B7A3B,#16A34A); border:none; color:#FFF;
         }}
         div[data-testid="stDataFrame"] {{ border-radius:14px; overflow:hidden; border:1px solid var(--line); }}
-        .stTabs [data-baseweb="tab-list"] {{ gap:4px; }}
-        .stTabs [data-baseweb="tab"] {{ border-radius:10px 10px 0 0; font-weight:800; }}
+
+        /* ---------- tabs tipo pill ----------
+           Streamlit cambio de BaseWeb a react-aria segun la version, asi que se
+           apuntan las dos estructuras. */
+        .stTabs [data-baseweb="tab-list"],
+        div[data-testid="stTabs"] [role="tablist"] {{
+            gap:6px !important; background:#EDF1F8 !important; padding:5px !important;
+            border-radius:14px !important; border:1px solid var(--line) !important;
+            margin-bottom:18px !important; display:flex !important; flex-wrap:wrap;
+        }}
+        .stTabs [data-baseweb="tab-highlight"],
+        .stTabs [data-baseweb="tab-border"],
+        div[data-testid="stTabs"] [data-testid="stTabHighlight"] {{ display:none !important; }}
+        .stTabs [data-baseweb="tab"],
+        div[data-testid="stTabs"] [role="tab"] {{
+            border-radius:10px; font-weight:800; font-size:13px; color:#5B6B86;
+            padding:9px 16px; background:transparent; border:none;
+            transition:background .15s, color .15s, box-shadow .15s;
+        }}
+        .stTabs [data-baseweb="tab"] p,
+        div[data-testid="stTabs"] [role="tab"] p {{
+            font-weight:800; font-size:13px; margin:0;
+        }}
+        .stTabs [data-baseweb="tab"]:hover,
+        div[data-testid="stTabs"] [role="tab"]:hover {{ background:#FFFFFF; color:#0B1B46; }}
+        .stTabs [aria-selected="true"],
+        div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
+        div[data-testid="stTabs"] [role="tab"][data-selected] {{
+            background:#FFFFFF !important; color:#0B1B46 !important;
+            box-shadow:0 3px 10px rgba(15,23,42,.09);
+        }}
+        .stTabs [data-baseweb="tab-panel"],
+        div[data-testid="stTabs"] [role="tabpanel"] {{ padding-top:2px; }}
+
+        /* ---------- encabezado de seccion ---------- */
+        .sec-head {{ display:flex; align-items:center; gap:12px; margin:4px 0 14px; }}
+        .sec-ico {{
+            width:38px; height:38px; flex:0 0 auto; border-radius:12px; display:grid;
+            place-items:center; background:#EEF3FF; color:{BRAND_PRIMARY};
+        }}
+        .sec-txt b {{ display:block; font-size:16px; font-weight:900; color:#0B1B46; line-height:1.2; }}
+        .sec-txt span {{ display:block; font-size:12.5px; color:var(--text-muted); font-weight:620; }}
+
+        /* ---------- tarjetas de acceso (inicio) ---------- */
+        .tiles {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; }}
+        .tile {{
+            background:#FFFFFF; border:1px solid var(--line); border-radius:18px; padding:20px;
+            box-shadow:0 8px 22px rgba(15,23,42,.05); position:relative; overflow:hidden;
+        }}
+        .tile .t-ico {{
+            width:42px; height:42px; border-radius:13px; display:grid; place-items:center;
+            background:#EEF3FF; color:{BRAND_PRIMARY}; margin-bottom:13px;
+        }}
+        .tile b {{ display:block; font-size:15px; font-weight:900; color:#0B1B46; }}
+        .tile p {{ margin:5px 0 0; font-size:12.5px; color:var(--text-muted);
+                   font-weight:620; line-height:1.55; }}
+        .tile .t-step {{
+            display:inline-flex; align-items:center; gap:5px; margin-top:12px;
+            font-size:11.5px; font-weight:850; color:{BRAND_BLUE};
+        }}
+
+        /* ---------- chips de estado ---------- */
+        .chips {{ display:flex; flex-wrap:wrap; gap:7px; margin:2px 0 14px; }}
+        .chip {{
+            display:inline-flex; align-items:center; gap:6px; padding:6px 12px;
+            border-radius:999px; font-size:11.5px; font-weight:800; border:1px solid;
+        }}
+        .chip-ok {{ background:#E7F7EE; border-color:#BBF7D0; color:#0B7A3B; }}
+        .chip-warn {{ background:#FFFBEB; border-color:#FDE68A; color:#92400E; }}
+        .chip-err {{ background:#FEE2E2; border-color:#FECACA; color:#B91C1C; }}
+        .chip-idle {{ background:#F1F5F9; border-color:#E2E8F0; color:#64748B; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+#: Modulos principales del sidebar: clave -> (etiqueta, descripcion, icono).
+MODULOS = {
+    "inicio": ("Inicio", "Resumen y accesos", "home"),
+    "repo": ("Tabla de Repo", "Reposicion semanal", "table"),
+    "llenado": ("Llenados de Canal", "Reparto de OC", "truck"),
+    "efectividad": ("Analisis de Efectividad", "Resultado de traspasos", "chart"),
+}
+
+
+def nav(actual: str, state_key: str = "modulo") -> str:
+    """Navegacion lateral con tarjetas.
+
+    Streamlit necesita un widget para capturar el clic, pero el boton queda
+    invisible y superpuesto sobre la tarjeta: lo que se ve y se estiliza es el
+    HTML, no el control nativo.
+    """
+    for clave, (etiqueta, desc, ico) in MODULOS.items():
+        activo = " active" if clave == actual else ""
+        with st.sidebar.container(key=f"navwrap_{clave}"):
+            html(f"""
+            <div class="nav-item{activo}">
+              <span class="nav-ico">{icon(ico, 19)}</span>
+              <span class="nav-txt"><b>{escape(etiqueta)}</b><span>{escape(desc)}</span></span>
+              <span class="nav-dot"></span>
+            </div>
+            """)
+            if st.button(etiqueta, key=f"nav_{clave}", help=desc):
+                if st.session_state.get(state_key) != clave:
+                    st.session_state[state_key] = clave
+                    st.rerun()
+    return st.session_state.get(state_key, actual)
+
+
+def sidebar_section(titulo: str) -> None:
+    html(f'<div class="sb-sec">{escape(titulo)}</div>', sidebar=True)
+
+
+def sidebar_footer(usuario: str) -> None:
+    html(f'<div class="sb-foot">{icon("shield", 13)}<span>{escape(usuario)}</span></div>',
+         sidebar=True)
 
 
 def sidebar_brand(subtitle: str = "") -> None:
@@ -366,9 +533,39 @@ def kpi_row(items: list[tuple[str, str, str]], accent_first: bool = True) -> Non
 
 
 def issue_box(severity: str, title: str, detail: str) -> None:
-    icons = {"error": "⛔", "warn": "⚠️", "info": "ℹ️", "ok": "✅"}
-    html(f'<div class="issue issue-{severity}"><span class="ic">{icons.get(severity, "•")}</span>'
+    nombres = {"error": "x-circle", "warn": "alert", "info": "info", "ok": "check-circle"}
+    html(f'<div class="issue issue-{severity}">'
+         f'<span class="ic">{icon(nombres.get(severity, "info"), 16)}</span>'
          f'<div><b>{escape(title)}</b><span>{escape(detail)}</span></div></div>')
+
+
+def section(titulo: str, subtitulo: str = "", ico: str = "layers") -> None:
+    """Encabezado de seccion con icono, para separar bloques dentro de una pagina."""
+    html(f"""
+    <div class="sec-head">
+      <span class="sec-ico">{icon(ico, 19)}</span>
+      <span class="sec-txt"><b>{escape(titulo)}</b><span>{escape(subtitulo)}</span></span>
+    </div>
+    """)
+
+
+def tiles(items: list[tuple[str, str, str, str]]) -> None:
+    """Tarjetas de acceso: (icono, titulo, descripcion, pie)."""
+    cajas = []
+    for ico, titulo, desc, pie in items:
+        pie_html = (f'<span class="t-step">{escape(pie)} {icon("arrow-right", 13)}</span>'
+                    if pie else "")
+        cajas.append(f'<div class="tile"><div class="t-ico">{icon(ico, 21)}</div>'
+                     f'<b>{escape(titulo)}</b><p>{escape(desc)}</p>{pie_html}</div>')
+    html(f'<div class="tiles">{"".join(cajas)}</div>')
+
+
+def chips(items: list[tuple[str, str]]) -> None:
+    """Chips de estado: (estado, texto) con estado ok|warn|err|idle."""
+    nombres = {"ok": "check", "warn": "alert", "err": "x-circle", "idle": "clock"}
+    partes = [f'<span class="chip chip-{estado}">{icon(nombres.get(estado, "info"), 13)}'
+              f'{escape(texto)}</span>' for estado, texto in items]
+    html(f'<div class="chips">{"".join(partes)}</div>')
 
 
 def slot_row(idx: str, label: str, detail: str, state: str) -> None:
