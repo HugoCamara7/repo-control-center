@@ -263,6 +263,26 @@ def app_styles() -> None:
         .pill-wait {{ background:#F1F5F9; color:#64748B; }}
         .pill-err {{ background:#FEE2E2; color:#B91C1C; }}
 
+        /* ---------- medidor ---------- */
+        .gauge-card {{
+            background:#FFFFFF; border:1px solid var(--line); border-radius:18px;
+            padding:14px 18px 18px; box-shadow:0 10px 26px rgba(15,23,42,.05);
+        }}
+        .gauge-txt {{ text-align:center; margin-top:-6px; }}
+        .gauge-txt b {{ display:block; font-size:14px; font-weight:900; color:#0B1B46; }}
+        .gauge-txt span {{ display:block; font-size:12px; color:var(--text-muted); font-weight:650; }}
+
+        /* ---------- tabla mini ---------- */
+        table.mini {{ width:100%; border-collapse:collapse; font-size:12.5px; }}
+        table.mini th {{
+            text-align:left; padding:7px 10px; background:#F3F6FB; color:#0B1B46;
+            font-weight:900; border-bottom:1px solid var(--line);
+        }}
+        table.mini td {{
+            padding:7px 10px; border-bottom:1px solid #F1F5F9; color:#334155; vertical-align:top;
+        }}
+        table.mini tr:last-child td {{ border-bottom:none; }}
+
         /* ---------- issues ---------- */
         .issue {{
             border-radius:14px; padding:13px 16px; margin-bottom:9px; border:1px solid;
